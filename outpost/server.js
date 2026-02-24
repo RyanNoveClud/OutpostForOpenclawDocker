@@ -16,6 +16,7 @@ const LOG_FILE = path.join(LOG_DIR, 'demo.log');
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
 const BRIDGE_STORE = ensureBridgeStore(__dirname);
 const BRIDGE_TASKS = new Map(readTasks(BRIDGE_STORE.tasksPath).map((t) => [t.taskId, t]));
+const COMPLETED_TASK_BROADCASTED = new Set();
 const WEB_ACTION_LOG = path.join(BRIDGE_STORE.dir, 'web-actions.jsonl');
 const SKILLS_STATE_PATH = path.join(BRIDGE_STORE.dir, 'skills-state.json');
 
@@ -77,6 +78,7 @@ const OUTPOST_SHELL_BIN = process.env.OUTPOST_SHELL_BIN || '';
 const OUTPOST_BRIDGE_SIGNATURE = process.env.OUTPOST_BRIDGE_SIGNATURE || '';
 const OUTPOST_OPENCLAW_CHAT_URL = process.env.OUTPOST_OPENCLAW_CHAT_URL || '';
 const OUTPOST_OPENCLAW_CHAT_TOKEN = process.env.OUTPOST_OPENCLAW_CHAT_TOKEN || '';
+const OUTPOST_TASK_BROADCAST_ON_COMPLETE = process.env.OUTPOST_TASK_BROADCAST_ON_COMPLETE !== 'false';
 
 function detectShellBin() {
   if (OUTPOST_SHELL_BIN) return OUTPOST_SHELL_BIN;
@@ -586,6 +588,24 @@ function setBridgeTask(taskId, patch) {
   const next = { ...prev, ...patch, source, updatedAt: new Date().toISOString() };
   BRIDGE_TASKS.set(taskId, next);
   upsertTask(BRIDGE_STORE.tasksPath, next);
+
+  const prevStatus = String(prev?.status || '').toLowerCase();
+  const nextStatus = String(next?.status || '').toLowerCase();
+  const reachedTerminal = (nextStatus === 'done' || nextStatus === 'error') && nextStatus !== prevStatus;
+
+  if (OUTPOST_TASK_BROADCAST_ON_COMPLETE && reachedTerminal && !COMPLETED_TASK_BROADCASTED.has(taskId)) {
+    COMPLETED_TASK_BROADCASTED.add(taskId);
+    appendTaskLog(BRIDGE_STORE.taskLogPath, {
+      taskId,
+      kind: 'task-broadcast',
+      phase: nextStatus,
+      source: next.source || 'system',
+      runner: next.runner || null,
+      message: `[任务广播] ${taskId} -> ${nextStatus}`,
+      error: nextStatus === 'error' ? (next.error || null) : undefined
+    });
+  }
+
   return next;
 }
 
