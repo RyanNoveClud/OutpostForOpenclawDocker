@@ -79,6 +79,7 @@ const OUTPOST_BRIDGE_SIGNATURE = process.env.OUTPOST_BRIDGE_SIGNATURE || '';
 const OUTPOST_OPENCLAW_CHAT_URL = process.env.OUTPOST_OPENCLAW_CHAT_URL || '';
 const OUTPOST_OPENCLAW_CHAT_TOKEN = process.env.OUTPOST_OPENCLAW_CHAT_TOKEN || '';
 const OUTPOST_TASK_BROADCAST_ON_COMPLETE = process.env.OUTPOST_TASK_BROADCAST_ON_COMPLETE === 'true';
+const OUTPOST_RESTART_CMD = process.env.OUTPOST_RESTART_CMD || '';
 
 function detectShellBin() {
   if (OUTPOST_SHELL_BIN) return OUTPOST_SHELL_BIN;
@@ -110,6 +111,21 @@ function ts() {
   const offH = pad(Math.floor(Math.abs(offsetMin) / 60));
   const offM = pad(Math.abs(offsetMin) % 60);
   return `${y}-${m}-${day}T${hh}:${mm}:${ss}.${ms}${sign}${offH}:${offM}`;
+}
+
+function getOutpostVersionMeta() {
+  const pkgPath = path.join(__dirname, 'package.json');
+  const fallback = { version: '0.10.3', updatedAt: ts() };
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) || {};
+    const stat = fs.statSync(pkgPath);
+    return {
+      version: String(pkg.version || fallback.version),
+      updatedAt: stat?.mtime ? new Date(stat.mtime).toISOString() : fallback.updatedAt
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 function writeLog(level, msg, meta = {}) {
@@ -765,6 +781,48 @@ app.get('/api/capabilities', requireApiToken, (req, res) => {
 });
 
 // Web Console endpoints (for built-in Outpost UI)
+app.get('/api/web/topbar', (req, res) => {
+  const meta = getOutpostVersionMeta();
+  return res.json({
+    outpostVersion: meta.version,
+    openclawVersion: '2026.2.x',
+    workspacePath: OUTPOST_WORKSPACE,
+    connection: 'online',
+    outpostUpdatedAt: meta.updatedAt,
+    allowUpdate: OUTPOST_ALLOW_UPDATE,
+    hasRefreshControl: false,
+    hasConnectionToggle: false,
+    hasUiSettingsShortcut: false
+  });
+});
+
+app.post('/api/web/system/update', async (req, res) => {
+  if (!OUTPOST_ALLOW_UPDATE) return res.status(403).json({ ok: false, error: 'update disabled (set OUTPOST_ALLOW_UPDATE=true)' });
+  try {
+    const defaultScript = path.join(__dirname, 'scripts', 'auto-update.sh');
+    const hasDefaultScript = fs.existsSync(defaultScript);
+    const cmd = String(req.body?.cmd || (hasDefaultScript ? `${SHELL_BIN} '${defaultScript}'` : `git -C '${OUTPOST_WORKSPACE}' pull --ff-only`)).trim();
+    const autoRestart = req.body?.autoRestart !== false;
+    const { stdout, stderr } = await runShellCommand(cmd, OUTPOST_WORKSPACE, 120000);
+
+    if (autoRestart) {
+      if (OUTPOST_RESTART_CMD) {
+        try {
+          await runShellCommand(OUTPOST_RESTART_CMD, OUTPOST_WORKSPACE, 30000);
+        } catch (err) {
+          return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, cmd, stdout, stderr });
+        }
+      } else {
+        setTimeout(() => process.exit(0), 300);
+      }
+    }
+
+    return res.json({ ok: true, cmd, stdout, stderr, restarted: autoRestart, restartMode: OUTPOST_RESTART_CMD ? 'command' : 'exit-for-supervisor' });
+  } catch (err) {
+    return res.status(400).json({ ok: false, error: err?.message || 'update failed', stdout: err?.stdout || '', stderr: err?.stderr || '' });
+  }
+});
+
 app.get('/api/chat/sessions', (req, res) => {
   return res.json(listChatSessions());
 });
