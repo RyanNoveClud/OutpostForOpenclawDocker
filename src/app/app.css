@@ -385,13 +385,21 @@ body {
   gap: var(--space-2);
 }
 
-.chat-input input,
+.chat-input textarea,
 .chat-input button {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 10px;
   background: transparent;
   color: var(--text);
+}
+
+.chat-input textarea {
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.5;
+  min-height: 42px;
+  max-height: 180px;
 }
 
 .chat-input button {
@@ -842,6 +850,33 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+}
+
+.bridge-task-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.bridge-task-actions input,
+.bridge-task-actions button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  padding: 6px 8px;
+}
+
+.bridge-task-actions input {
+  min-width: 240px;
+}
+
+.bridge-task-actions button {
+  cursor: pointer;
+}
+
+.bridge-task-actions button:hover {
+  background: var(--bg-hover);
 }
 
 .bridge-error {

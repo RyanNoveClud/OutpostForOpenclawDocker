@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { ConnectionState } from '../types';
 
 export interface UiSettingsState {
@@ -38,13 +39,26 @@ export const defaultLogsFilter: LogsFilterState = {
   keyword: ''
 };
 
-export const useAppStore = create<AppStoreState>((set) => ({
-  connection: 'online',
-  selectedChatSessionId: null,
-  ui: defaultUiSettings,
-  logsFilter: defaultLogsFilter,
-  setConnection: (connection) => set({ connection }),
-  setSelectedChatSessionId: (selectedChatSessionId) => set({ selectedChatSessionId }),
-  setUiSettings: (patch) => set((state) => ({ ui: { ...state.ui, ...patch } })),
-  setLogsFilter: (patch) => set((state) => ({ logsFilter: { ...state.logsFilter, ...patch } }))
-}));
+export const useAppStore = create<AppStoreState>()(
+  persist(
+    (set) => ({
+      connection: 'online',
+      selectedChatSessionId: null,
+      ui: defaultUiSettings,
+      logsFilter: defaultLogsFilter,
+      setConnection: (connection) => set({ connection }),
+      setSelectedChatSessionId: (selectedChatSessionId) => set({ selectedChatSessionId }),
+      setUiSettings: (patch) => set((state) => ({ ui: { ...state.ui, ...patch } })),
+      setLogsFilter: (patch) => set((state) => ({ logsFilter: { ...state.logsFilter, ...patch } }))
+    }),
+    {
+      name: 'outpost-app-store',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        selectedChatSessionId: state.selectedChatSessionId,
+        ui: state.ui,
+        logsFilter: state.logsFilter
+      })
+    }
+  )
+);

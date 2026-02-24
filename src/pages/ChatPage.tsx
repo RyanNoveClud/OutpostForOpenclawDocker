@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { dataAdapter } from '../adapters/runtime';
 import { useAppStore } from '../store';
 import { appendUserMessage } from './chat-utils';
@@ -14,6 +14,7 @@ export function ChatPage() {
   const selectedChatSessionId = useAppStore((s) => s.selectedChatSessionId);
   const setSelectedChatSessionId = useAppStore((s) => s.setSelectedChatSessionId);
   const listRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { t } = useI18n();
 
   useEffect(() => {
@@ -38,6 +39,13 @@ export function ChatPage() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
   }, [currentMessages]);
 
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+  }, [draft]);
+
   function patchSessionMessage(sessionId: string, messageId: string, patch: Partial<ChatMessage>) {
     setSessions((prev) =>
       prev.map((session) =>
@@ -52,8 +60,15 @@ export function ChatPage() {
     );
   }
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
+  function onInputKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      void onSubmit();
+    }
+  }
+
+  async function onSubmit(event?: FormEvent) {
+    event?.preventDefault();
     if (!currentSession || sending) return;
 
     const now = new Date().toISOString();
@@ -181,9 +196,12 @@ export function ChatPage() {
         </div>
 
         <form className="chat-input" onSubmit={onSubmit}>
-          <input
+          <textarea
+            ref={textareaRef}
+            rows={1}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onInputKeyDown}
             placeholder={t('inputPlaceholder')}
           />
           <button type="submit" disabled={sending}>{sending ? '...' : t('send')}</button>

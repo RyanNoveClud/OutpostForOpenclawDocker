@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { virtualSlice } from './logs-utils';
+import { loadTaskAliases, normalizeAlias, saveTaskAliases } from './bridge-task-alias-utils';
 import { dataAdapter } from '../adapters/runtime';
 import type { BridgeTask, BridgeTaskLogItem, TasksOverview } from '../types';
 import { useI18n } from '../i18n';
@@ -29,6 +30,9 @@ export function BridgeTasksPage() {
   const [offset, setOffset] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [overview, setOverview] = useState<TasksOverview | null>(null);
+  const [taskAliases, setTaskAliases] = useState<Record<string, string>>(() => loadTaskAliases());
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [aliasDraft, setAliasDraft] = useState('');
 
   useEffect(() => {
     Promise.all([dataAdapter.getTasksOverview(), dataAdapter.getBridgeTaskLog()])
@@ -51,11 +55,12 @@ export function BridgeTasksPage() {
     return sorted.filter((task) => {
       const statusPass = status === 'all' || normalizeStatus(task) === status;
       const kindPass = kind === 'all' || task.kind === kind;
-      const text = `${task.taskName || ''} ${task.taskId} ${task.runner || ''} ${task.source || ''} ${task.error || ''} ${task.slug || ''}`.toLowerCase();
+      const alias = taskAliases[task.taskId] || '';
+      const text = `${alias} ${task.taskName || ''} ${task.taskId} ${task.runner || ''} ${task.source || ''} ${task.error || ''} ${task.slug || ''}`.toLowerCase();
       const keywordPass = !keyword || text.includes(keyword.toLowerCase());
       return statusPass && kindPass && keywordPass;
     });
-  }, [sorted, status, kind, keyword]);
+  }, [sorted, status, kind, keyword, taskAliases]);
 
   const virtualTasks = useMemo(() => virtualSlice(filtered, offset, PAGE_SIZE), [filtered, offset]);
 
@@ -75,6 +80,25 @@ export function BridgeTasksPage() {
   }, [sorted, overview]);
 
   const latestLogs = useMemo(() => [...taskLogs].slice(-8).reverse(), [taskLogs]);
+
+  function startRename(task: BridgeTask) {
+    setEditingTaskId(task.taskId);
+    setAliasDraft(taskAliases[task.taskId] || task.taskName || '');
+  }
+
+  function saveRename(taskId: string) {
+    const next = normalizeAlias(aliasDraft);
+    const merged = { ...taskAliases };
+    if (next) {
+      merged[taskId] = next;
+    } else {
+      delete merged[taskId];
+    }
+    setTaskAliases(merged);
+    saveTaskAliases(merged);
+    setEditingTaskId(null);
+    setAliasDraft('');
+  }
 
   if (error) return <h2>Tasks ({t('loadFailed')}: {error})</h2>;
 
@@ -157,15 +181,30 @@ export function BridgeTasksPage() {
             return (
               <article key={task.taskId} className={`bridge-task-item ${normalized}`}>
                 <div className="bridge-task-head">
-                  <strong>{task.taskName || task.taskId}</strong>
+                  <strong>{taskAliases[task.taskId] || task.taskName || task.taskId}</strong>
                   <span className={`badge ${normalized === 'done' ? 'done' : normalized === 'error' ? 'todo' : 'partial'}`}>
                     {normalized}
                   </span>
                 </div>
+                <div className="bridge-task-actions">
+                  {editingTaskId === task.taskId ? (
+                    <>
+                      <input
+                        value={aliasDraft}
+                        onChange={(e) => setAliasDraft(e.target.value)}
+                        placeholder="输入任务名称（留空清除）"
+                      />
+                      <button type="button" onClick={() => saveRename(task.taskId)}>保存</button>
+                      <button type="button" onClick={() => setEditingTaskId(null)}>取消</button>
+                    </>
+                  ) : (
+                    <button type="button" onClick={() => startRename(task)}>重命名</button>
+                  )}
+                </div>
                 <small>
                   {task.kind} · {task.runner || '-'} · {task.source || '-'}
                 </small>
-                {task.taskName ? <small>ID: {task.taskId}</small> : null}
+                <small>ID: {task.taskId}</small>
                 {task.slug ? <small>skill: {task.slug} {task.version ? `@${task.version}` : ''}</small> : null}
                 <small>
                   进度: {typeof task.progressPercent === 'number' ? `${task.progressPercent}%` : '-'}

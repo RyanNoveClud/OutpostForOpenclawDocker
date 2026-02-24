@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { dataAdapter } from '../adapters/runtime';
 import { useAppStore } from '../store';
-import { loadUiSettings, saveUiSettings } from './settings-utils';
 import type { UiSettings } from '../adapters';
 import { useI18n } from '../i18n';
 
@@ -18,17 +17,12 @@ export function SettingsPage() {
     dataAdapter
       .getSettings()
       .then((result) => {
-        const local = loadUiSettings();
-        const merged = { ...result, ...local };
+        const merged = { ...result, ...ui };
         setSettings(merged);
         setUiSettings(merged);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'unknown error'));
-  }, [setUiSettings]);
-
-  useEffect(() => {
-    saveUiSettings(ui);
-  }, [ui]);
+  }, [setUiSettings, ui]);
 
   async function runAutoUpdate() {
     if (updating) return;
