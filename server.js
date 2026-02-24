@@ -93,7 +93,8 @@ const OUTPOST_TOKEN = process.env.OUTPOST_TOKEN || '';
 const OUTPOST_ALLOW_SHELL = process.env.OUTPOST_ALLOW_SHELL === 'true';
 const OUTPOST_ALLOW_UPDATE = process.env.OUTPOST_ALLOW_UPDATE === 'true';
 const OUTPOST_ALLOW_SKILLS = process.env.OUTPOST_ALLOW_SKILLS === 'true';
-const DEFAULT_WORKSPACE = process.cwd();
+const OUTPOST_UPDATE_REPO = process.env.OUTPOST_UPDATE_REPO || 'https://github.com/RyanNoveClud/OutpostForOpenclawDocker.git';
+const DEFAULT_WORKSPACE = process.env.OUTPOST_DEFAULT_WORKSPACE || path.resolve(process.cwd(), 'outpost-runtime');
 const OUTPOST_WORKSPACE = process.env.OUTPOST_WORKSPACE || DEFAULT_WORKSPACE;
 const OUTPOST_SKILLS_DIR = process.env.OUTPOST_SKILLS_DIR || path.join(OUTPOST_WORKSPACE, 'skills');
 const OPENCLAW_SKILLS_DIR = process.env.OPENCLAW_SKILLS_DIR || '/home/node/.openclaw/workspace/skills';
@@ -770,6 +771,50 @@ async function runShellCommand(cmd, cwd, timeout) {
   return await execFileAsync(SHELL_BIN, shellArgs(cmd), { cwd, timeout });
 }
 
+function quoteShell(value = '') {
+  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
+}
+
+function hasGitRepo(dir) {
+  if (!dir) return false;
+  return fs.existsSync(path.join(dir, '.git'));
+}
+
+function isDirEmpty(dir) {
+  try {
+    const rows = fs.readdirSync(dir);
+    return rows.length === 0;
+  } catch {
+    return true;
+  }
+}
+
+async function ensureUpdateWorkspace() {
+  const repo = OUTPOST_UPDATE_REPO;
+  const workspace = OUTPOST_WORKSPACE;
+  const parent = path.dirname(workspace);
+  if (!hasGitRepo(workspace)) {
+    if (fs.existsSync(workspace) && !isDirEmpty(workspace)) {
+      throw new Error(`update workspace is not a git repository: ${workspace}`);
+    }
+    fs.mkdirSync(parent, { recursive: true });
+    const cloneCmd = `git clone ${quoteShell(repo)} ${quoteShell(workspace)}`;
+    await runShellCommand(cloneCmd, parent, 180000);
+  }
+
+  try {
+    const remote = await runShellCommand(`git -C ${quoteShell(workspace)} remote get-url origin`, workspace, 15000);
+    const current = String(remote?.stdout || '').trim();
+    if (!current) {
+      await runShellCommand(`git -C ${quoteShell(workspace)} remote add origin ${quoteShell(repo)}`, workspace, 15000);
+    } else if (current !== repo) {
+      await runShellCommand(`git -C ${quoteShell(workspace)} remote set-url origin ${quoteShell(repo)}`, workspace, 15000);
+    }
+  } catch {
+    await runShellCommand(`git -C ${quoteShell(workspace)} remote set-url origin ${quoteShell(repo)}`, workspace, 15000);
+  }
+}
+
 async function runDockerExec(args = [], timeout = 30000) {
   return await execFileAsync('docker', ['exec', OPENCLAW_DOCKER_CONTAINER, ...args], { cwd: OUTPOST_WORKSPACE, timeout });
 }
@@ -915,7 +960,7 @@ app.post('/api/web/system/update', async (req, res) => {
   setUpdateStatus({
     state: 'running',
     phase: 'prepare',
-    text: '准备更新...',
+    text: `准备更新仓库 ${OUTPOST_UPDATE_REPO} ...`,
     percent: 5,
     startedAt: new Date().toISOString(),
     finishedAt: null,
@@ -927,7 +972,8 @@ app.post('/api/web/system/update', async (req, res) => {
 
   let oldCommit = '';
   try {
-    const rev = await runShellCommand(`git -C '${OUTPOST_WORKSPACE}' rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
+    await ensureUpdateWorkspace();
+    const rev = await runShellCommand(`git -C ${quoteShell(OUTPOST_WORKSPACE)} rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
     oldCommit = String(rev?.stdout || '').trim();
   } catch {
     oldCommit = 'unknown';
@@ -937,8 +983,9 @@ app.post('/api/web/system/update', async (req, res) => {
   writeLog('info', 'update started', { source: 'updater', branch, oldCommit, autoRestart });
 
   try {
-    setUpdateStatus({ phase: 'git', text: '拉取最新代码...', percent: 25 });
-    const gitCmd = `git -C '${OUTPOST_WORKSPACE}' fetch --all --prune && git -C '${OUTPOST_WORKSPACE}' checkout ${branch} && git -C '${OUTPOST_WORKSPACE}' reset --hard origin/${branch}`;
+    setUpdateStatus({ phase: 'git', text: `拉取最新代码到 ${OUTPOST_WORKSPACE} ...`, percent: 25 });
+    await ensureUpdateWorkspace();
+    const gitCmd = `git -C ${quoteShell(OUTPOST_WORKSPACE)} fetch --all --prune && git -C ${quoteShell(OUTPOST_WORKSPACE)} checkout ${branch} && git -C ${quoteShell(OUTPOST_WORKSPACE)} reset --hard origin/${branch}`;
     const gitResult = await runShellCommand(gitCmd, OUTPOST_WORKSPACE, 120000);
 
     const hasLock = fs.existsSync(path.join(OUTPOST_WORKSPACE, 'package-lock.json'));
@@ -950,7 +997,7 @@ app.post('/api/web/system/update', async (req, res) => {
 
     let newCommit = '';
     try {
-      const rev = await runShellCommand(`git -C '${OUTPOST_WORKSPACE}' rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
+      const rev = await runShellCommand(`git -C ${quoteShell(OUTPOST_WORKSPACE)} rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
       newCommit = String(rev?.stdout || '').trim();
     } catch {
       newCommit = 'unknown';
@@ -992,6 +1039,8 @@ app.post('/api/web/system/update', async (req, res) => {
     return res.json({
       ok: true,
       branch,
+      workspace: OUTPOST_WORKSPACE,
+      repo: OUTPOST_UPDATE_REPO,
       oldCommit,
       newCommit,
       restarted: autoRestart,
@@ -1614,9 +1663,11 @@ app.post('/api/shell', requireApiToken, async (req, res) => {
 app.post('/api/update', requireApiToken, async (req, res) => {
   if (!OUTPOST_ALLOW_UPDATE) return res.status(403).json({ ok: false, error: 'update disabled (set OUTPOST_ALLOW_UPDATE=true)' });
   try {
-    const cmd = String(req.body?.cmd || `git -C '${OUTPOST_WORKSPACE}' pull --ff-only`).trim();
+    await ensureUpdateWorkspace();
+    const defaultCmd = `git -C ${quoteShell(OUTPOST_WORKSPACE)} fetch --all --prune && git -C ${quoteShell(OUTPOST_WORKSPACE)} checkout main && git -C ${quoteShell(OUTPOST_WORKSPACE)} reset --hard origin/main`;
+    const cmd = String(req.body?.cmd || defaultCmd).trim();
     const { stdout, stderr } = await runShellCommand(cmd, OUTPOST_WORKSPACE, 60000);
-    res.json({ ok: true, cmd, stdout, stderr, note: '如有依赖变更，请重启 outpost 服务' });
+    res.json({ ok: true, cmd, workspace: OUTPOST_WORKSPACE, repo: OUTPOST_UPDATE_REPO, stdout, stderr, note: '如有依赖变更，请重启 outpost 服务' });
   } catch (err) {
     res.status(400).json({ ok: false, error: err?.message || 'update 失败', stdout: err?.stdout || '', stderr: err?.stderr || '' });
   }
@@ -1857,9 +1908,11 @@ app.post('/api/plugin/:name/invoke', requireApiToken, async (req, res) => {
     if (name === 'updater') {
       if (!OUTPOST_ALLOW_UPDATE) return res.status(403).json({ ok: false, error: 'update disabled' });
       if (action !== 'pull') return res.status(400).json({ ok: false, error: 'updater action must be pull' });
-      const cmd = String(req.body?.cmd || `git -C '${OUTPOST_WORKSPACE}' pull --ff-only`).trim();
+      await ensureUpdateWorkspace();
+      const defaultCmd = `git -C ${quoteShell(OUTPOST_WORKSPACE)} fetch --all --prune && git -C ${quoteShell(OUTPOST_WORKSPACE)} checkout main && git -C ${quoteShell(OUTPOST_WORKSPACE)} reset --hard origin/main`;
+      const cmd = String(req.body?.cmd || defaultCmd).trim();
       const { stdout, stderr } = await runShellCommand(cmd, OUTPOST_WORKSPACE, 60000);
-      return res.json({ ok: true, plugin: name, action, stdout, stderr });
+      return res.json({ ok: true, plugin: name, action, workspace: OUTPOST_WORKSPACE, repo: OUTPOST_UPDATE_REPO, stdout, stderr });
     }
 
     if (name === 'skills') {
