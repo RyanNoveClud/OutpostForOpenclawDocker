@@ -1,34 +1,13 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Outpost 控制台</title>
-  <link rel="stylesheet" href="/styles.css" />
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <h1>🛰️ Outpost（宿主机中介服务）</h1>
-      <div class="sub">这里是 Outpost 控制台：支持浏览器控制，并可扩展为宿主机通用服务中介。</div>
-
-      <div class="row">
-        <input id="cmd" placeholder="例如：open https://example.com" />
-        <button id="run">执行</button>
-      </div>
-
-      <div class="tip">
-        支持：<code>attach</code> / <code>split</code> / <code>split_here</code> / <code>target</code> / <code>targets</code> / <code>open</code> / <code>navigate</code> / <code>click</code> / <code>type</code> / <code>typen</code> / <code>typetext</code> / <code>select</code> / <code>list [N]</code> / <code>clickn</code> / <code>highlightn</code> / <code>clicktext</code> / <code>highlighttext</code> / <code>highlight</code> / <code>title</code> / <code>screenshot</code> / <code>help</code>
-      </div>
-
-      <div class="panel-title">执行结果日志</div>
-      <div class="log" id="log"></div>
-
-      <div class="panel-title">Outpost 通讯日志（发送/接收）</div>
-      <div class="log comm" id="commLog"></div>
-    </div>
-  </div>
-
-  <script type="module" src="/app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/outpost-icon-nebula.svg" />
+    <title>Outpost Console</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

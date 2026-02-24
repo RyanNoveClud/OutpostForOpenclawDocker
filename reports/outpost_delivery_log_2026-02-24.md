@@ -34,3 +34,19 @@
 - 重新验证：
   - `node --check server.js` 通过
   - `npm run build` 通过
+
+## 追加修复（12:29 前端回退）
+### 现象
+- 本地拉取后呈现旧版静态页，而不是新版 React/Vite 控制台。
+
+### 根因
+- 仓库扁平化过程把新版前端关键文件丢失，仅保留了静态入口。
+
+### 修复
+- 从历史稳定分支恢复新版前端全量文件（`src/*`、`tsconfig.json`、`vite.config.ts`、`vitest.config.ts`、`eslint.config.js`、`public/*`、`scripts/check-platform-deps.mjs` 等）。
+- 保留并兼容当前根目录结构。
+- 适配构建命令到当前环境：使用 `node ./node_modules/...` 方式调用 `tsc/vite`，规避可执行权限问题。
+- 修复 devDependencies 未安装导致的构建失败（执行 `npm install --include=dev`）。
+
+### 验证
+- `npm run build` 输出 67 modules transformed，构建成功。

@@ -5,21 +5,11 @@ import { loadUiSettings, saveUiSettings } from './settings-utils';
 import type { UiSettings } from '../adapters';
 import { useI18n } from '../i18n';
 
-interface UpdateStatus {
-  ok?: boolean;
-  state?: 'idle' | 'running' | 'done' | 'error' | string;
-  phase?: string;
-  text?: string;
-  percent?: number;
-  error?: string | null;
-}
-
 export function SettingsPage() {
   const [settings, setSettings] = useState<UiSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updateScript, setUpdateScript] = useState('');
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: 'idle', phase: 'idle', text: '等待更新', percent: 0 });
   const ui = useAppStore((s) => s.ui);
   const setUiSettings = useAppStore((s) => s.setUiSettings);
   const { t } = useI18n();
@@ -40,52 +30,20 @@ export function SettingsPage() {
     saveUiSettings(ui);
   }, [ui]);
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let stopped = false;
-
-    const tick = async () => {
-      try {
-        const res = await fetch('/api/web/system/update-status');
-        const json = await res.json().catch(() => ({}));
-        if (!stopped && res.ok && json) {
-          setUpdateStatus({
-            state: json.state || 'idle',
-            phase: json.phase || 'idle',
-            text: json.text || '等待更新',
-            percent: Number.isFinite(Number(json.percent)) ? Number(json.percent) : 0,
-            error: json.error || null
-          });
-        }
-      } catch {
-        // ignore poll errors
-      } finally {
-        if (!stopped) timer = setTimeout(tick, 1000);
-      }
-    };
-
-    tick();
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
   async function runAutoUpdate() {
     if (updating) return;
     try {
       setUpdating(true);
-      setUpdateStatus({ state: 'running', phase: 'prepare', text: '准备更新...', percent: 5, error: null });
       let res = await fetch('/api/web/system/update', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ autoRestart: true, branch: updateScript.trim() || 'main' })
+        body: JSON.stringify({ autoRestart: true, cmd: updateScript.trim() || undefined })
       });
       if (res.status === 404) {
         res = await fetch('/api/update', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ cmd: `git -C '/home/node/.openclaw/workspace' pull --ff-only origin ${updateScript.trim() || 'main'}` })
+          body: JSON.stringify({ cmd: updateScript.trim() || undefined })
         });
       }
       const json = await res.json().catch(() => ({}));
@@ -151,36 +109,19 @@ export function SettingsPage() {
       </article>
 
       <article className="dashboard-card" style={{ marginTop: 12 }}>
-        <h3>自动更新</h3>
+        <h3>自动更新脚本</h3>
         <div className="skills-actions" style={{ display: 'grid', gap: 8 }}>
           <label>
-            更新分支（可选）
+            自定义脚本（可选）
             <input
               type="text"
-              placeholder="默认 main"
+              placeholder="留空则使用 scripts/auto-update.sh"
               value={updateScript}
               onChange={(e) => setUpdateScript(e.target.value)}
             />
           </label>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 6 }}>
-              <span>{updateStatus.text || '等待更新'}</span>
-              <span>{Math.max(0, Math.min(100, Number(updateStatus.percent || 0)))}%</span>
-            </div>
-            <div style={{ width: '100%', height: 10, background: 'rgba(255,255,255,0.12)', borderRadius: 999, overflow: 'hidden' }}>
-              <div
-                style={{
-                  width: `${Math.max(0, Math.min(100, Number(updateStatus.percent || 0)))}%`,
-                  height: '100%',
-                  background: updateStatus.state === 'error' ? '#ef4444' : '#22c55e',
-                  transition: 'width 240ms ease'
-                }}
-              />
-            </div>
-            {updateStatus.error ? <small style={{ color: '#ef4444' }}>{updateStatus.error}</small> : null}
-          </div>
-          <button type="button" onClick={runAutoUpdate} disabled={updating || updateStatus.state === 'running'}>
-            {updating || updateStatus.state === 'running' ? '更新中...' : '执行更新并自动重启'}
+          <button type="button" onClick={runAutoUpdate} disabled={updating}>
+            {updating ? '更新中...' : '执行更新并自动重启'}
           </button>
         </div>
       </article>

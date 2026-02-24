@@ -80,12 +80,6 @@ export function BridgeTasksPage() {
 
   return (
     <section className="bridge-wrap">
-      <div className="feature-note">
-        <strong>{t('status')}：</strong>
-        <span className="badge done">{t('taskBoardReady')}</span>
-        <span className="badge partial">{t('taskFilterReady')}</span>
-      </div>
-
       <section className="bridge-kpi-grid">
         <article className="dashboard-card">
           <h3>{t('totalTasks')}</h3>
