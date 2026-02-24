@@ -20,21 +20,49 @@ const COMPLETED_TASK_BROADCASTED = new Set();
 const WEB_ACTION_LOG = path.join(BRIDGE_STORE.dir, 'web-actions.jsonl');
 const SKILLS_STATE_PATH = path.join(BRIDGE_STORE.dir, 'skills-state.json');
 
+const CHAT_CACHE_PATH = path.join(BRIDGE_STORE.dir, 'chat-sessions.json');
 const CHAT_SESSIONS = new Map();
-CHAT_SESSIONS.set('chat-1', {
-  id: 'chat-1',
-  title: 'Outpost Console Chat',
-  updatedAt: new Date().toISOString(),
-  messages: [
-    {
-      id: 'm-1',
-      role: 'assistant',
-      source: 'openclaw',
-      content: '你好，开始聊吧。',
-      createdAt: new Date().toISOString()
+
+function loadChatSessions() {
+  if (!fs.existsSync(CHAT_CACHE_PATH)) return;
+  try {
+    const rows = JSON.parse(fs.readFileSync(CHAT_CACHE_PATH, 'utf8'));
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+      if (!row?.id) continue;
+      CHAT_SESSIONS.set(String(row.id), {
+        id: String(row.id),
+        title: String(row.title || `Session ${row.id}`),
+        updatedAt: row.updatedAt || new Date().toISOString(),
+        messages: Array.isArray(row.messages) ? row.messages.slice(-300) : []
+      });
     }
-  ]
-});
+  } catch {}
+}
+
+function saveChatSessions() {
+  const rows = [...CHAT_SESSIONS.values()].map((s) => ({ ...s, messages: Array.isArray(s.messages) ? s.messages.slice(-300) : [] }));
+  fs.writeFileSync(CHAT_CACHE_PATH, JSON.stringify(rows, null, 2));
+}
+
+loadChatSessions();
+if (!CHAT_SESSIONS.size) {
+  CHAT_SESSIONS.set('chat-1', {
+    id: 'chat-1',
+    title: 'Outpost Console Chat',
+    updatedAt: new Date().toISOString(),
+    messages: [
+      {
+        id: 'm-1',
+        role: 'assistant',
+        source: 'openclaw',
+        content: '你好，开始聊吧。',
+        createdAt: new Date().toISOString()
+      }
+    ]
+  });
+  saveChatSessions();
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -385,6 +413,7 @@ function ensureChatSession(sessionId = 'chat-1') {
   if (CHAT_SESSIONS.has(sessionId)) return CHAT_SESSIONS.get(sessionId);
   const next = { id: sessionId, title: `Session ${sessionId}`, updatedAt: new Date().toISOString(), messages: [] };
   CHAT_SESSIONS.set(sessionId, next);
+  saveChatSessions();
   return next;
 }
 
@@ -457,8 +486,10 @@ async function relayChatToOpenClaw(sessionId, text) {
 function appendChatMessage(sessionId, msg) {
   const session = ensureChatSession(sessionId);
   session.messages.push(msg);
+  if (session.messages.length > 300) session.messages = session.messages.slice(-300);
   session.updatedAt = msg.createdAt || new Date().toISOString();
   CHAT_SESSIONS.set(sessionId, session);
+  saveChatSessions();
   return session;
 }
 

@@ -72,16 +72,23 @@ export function ShellLayout() {
     if (updating) return;
     try {
       setUpdating(true);
-      const res = await fetch('/api/web/system/update', {
+      let res = await fetch('/api/web/system/update', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ autoRestart: true })
       });
+      if (res.status === 404) {
+        res = await fetch('/api/update', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({})
+        });
+      }
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
       alert('更新脚本已执行，服务将自动重启。');
     } catch (err) {
-      alert(`更新失败: ${err instanceof Error ? err.message : 'unknown error'}`);
+      alert(`更新失败: ${err instanceof Error ? err.message : 'network/endpoint unavailable'}`);
     } finally {
       setUpdating(false);
     }
