@@ -1,0 +1,2 @@
+# OutpostForOpenclawDocker
+这个是一个主要解决如果在docker中安装openclaw的时候如何能够，让openclaw伸出他的触手入侵宿主机的工程；主要就是宿主机和docker中进行一些交互工作，docker中的Openclaw可以通过他控制外面的浏览器，安装其他SKill以后功能会更加强大；
