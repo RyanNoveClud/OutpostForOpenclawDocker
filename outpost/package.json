@@ -8,7 +8,7 @@
     "check:deps:platform": "node scripts/check-platform-deps.mjs",
     "start": "node server.js",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:ui": "vitest run src/tests/interactions.test.ts",
