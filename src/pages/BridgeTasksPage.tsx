@@ -51,7 +51,7 @@ export function BridgeTasksPage() {
     return sorted.filter((task) => {
       const statusPass = status === 'all' || normalizeStatus(task) === status;
       const kindPass = kind === 'all' || task.kind === kind;
-      const text = `${task.taskId} ${task.runner || ''} ${task.source || ''} ${task.error || ''} ${task.slug || ''}`.toLowerCase();
+      const text = `${task.taskName || ''} ${task.taskId} ${task.runner || ''} ${task.source || ''} ${task.error || ''} ${task.slug || ''}`.toLowerCase();
       const keywordPass = !keyword || text.includes(keyword.toLowerCase());
       return statusPass && kindPass && keywordPass;
     });
@@ -157,7 +157,7 @@ export function BridgeTasksPage() {
             return (
               <article key={task.taskId} className={`bridge-task-item ${normalized}`}>
                 <div className="bridge-task-head">
-                  <strong>{task.taskId}</strong>
+                  <strong>{task.taskName || task.taskId}</strong>
                   <span className={`badge ${normalized === 'done' ? 'done' : normalized === 'error' ? 'todo' : 'partial'}`}>
                     {normalized}
                   </span>
@@ -165,6 +165,7 @@ export function BridgeTasksPage() {
                 <small>
                   {task.kind} · {task.runner || '-'} · {task.source || '-'}
                 </small>
+                {task.taskName ? <small>ID: {task.taskId}</small> : null}
                 {task.slug ? <small>skill: {task.slug} {task.version ? `@${task.version}` : ''}</small> : null}
                 <small>
                   进度: {typeof task.progressPercent === 'number' ? `${task.progressPercent}%` : '-'}

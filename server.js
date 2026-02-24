@@ -651,10 +651,56 @@ function normalizeTaskSource(raw, fallback = 'system') {
   return s;
 }
 
+function summarizeText(text, maxLen = 24) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  return clean.length > maxLen ? `${clean.slice(0, maxLen)}…` : clean;
+}
+
+function buildTaskName(taskId, patch = {}, prev = {}) {
+  if (patch.taskName) return String(patch.taskName);
+  if (prev.taskName) return String(prev.taskName);
+
+  const kind = String(patch.kind || prev.kind || '').toLowerCase();
+  const runner = String(patch.runner || prev.runner || '').toLowerCase();
+  const slug = String(patch.slug || prev.slug || '').trim();
+  const source = normalizeTaskSource(patch.source ?? prev.source, 'system');
+
+  if (kind === 'install') {
+    return slug ? `安装技能 · ${slug}` : '安装技能';
+  }
+
+  if (kind === 'run') {
+    if (runner === 'outpost-shell') {
+      const cmd = summarizeText(patch.cmd || prev.cmd);
+      return cmd ? `执行命令 · ${cmd}` : '执行命令';
+    }
+    if (runner === 'outpost-browser') {
+      const command = summarizeText(patch.command || prev.command);
+      return command ? `浏览器操作 · ${command}` : '浏览器操作';
+    }
+    if (runner === 'openclaw-plan') {
+      const steps = Array.isArray(patch.steps) ? patch.steps.length : Array.isArray(prev.steps) ? prev.steps.length : 0;
+      return steps > 0 ? `执行计划 · ${steps} 步` : '执行计划';
+    }
+    return runner ? `运行任务 · ${runner}` : '运行任务';
+  }
+
+  if (kind === 'task' && source === 'openclaw-chat') {
+    const text = summarizeText(patch.prompt || prev.prompt || patch?.result?.prompt || prev?.result?.prompt);
+    return text ? `对话任务 · ${text}` : '对话任务';
+  }
+
+  if (kind === 'result') return '任务回传';
+  if (kind) return `任务 · ${kind}`;
+  return `任务 · ${taskId}`;
+}
+
 function setBridgeTask(taskId, patch) {
   const prev = BRIDGE_TASKS.get(taskId) || { taskId, createdAt: new Date().toISOString() };
   const source = normalizeTaskSource(patch?.source ?? prev?.source, 'system');
-  const next = { ...prev, ...patch, source, updatedAt: new Date().toISOString() };
+  const taskName = buildTaskName(taskId, patch, prev);
+  const next = { ...prev, ...patch, source, taskName, updatedAt: new Date().toISOString() };
   BRIDGE_TASKS.set(taskId, next);
   upsertTask(BRIDGE_STORE.tasksPath, next);
 
@@ -1010,7 +1056,8 @@ app.post('/api/web/chat/stream', async (req, res) => {
     runner: 'chat-relay',
     stage: 'relay',
     progressPercent: 30,
-    result: { sessionId, promptLength: text.length }
+    prompt: text,
+    result: { sessionId, promptLength: text.length, prompt: text }
   });
   appendTaskLog(BRIDGE_STORE.taskLogPath, { taskId: chatTaskId, kind: 'chat-run', phase: 'start', source: 'openclaw-chat', runner: 'chat-relay' });
 
@@ -1660,7 +1707,15 @@ app.post('/api/bridge/run', requireApiToken, requireBridgeSignature, async (req,
   const runner = String(req.body?.runner || '').trim();
   const source = String(req.body?.source || 'openclaw');
   const taskId = makeTaskId('run');
-  setBridgeTask(taskId, { kind: 'run', status: 'running', runner, source });
+  setBridgeTask(taskId, {
+    kind: 'run',
+    status: 'running',
+    runner,
+    source,
+    cmd: req.body?.cmd,
+    command: req.body?.command,
+    steps: req.body?.steps
+  });
   appendTaskLog(BRIDGE_STORE.taskLogPath, { taskId, kind: 'run', phase: 'start', runner, source });
 
   try {

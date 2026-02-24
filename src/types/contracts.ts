@@ -94,6 +94,7 @@ export interface TopbarState {
 
 export interface BridgeTask {
   taskId: string;
+  taskName?: string;
   kind: 'install' | 'run' | 'result' | 'task' | string;
   status: 'queued' | 'running' | 'done' | 'error' | 'retry_wait' | string;
   runner?: string;
