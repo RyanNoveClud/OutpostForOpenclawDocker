@@ -109,6 +109,27 @@ const OUTPOST_OPENCLAW_CHAT_TOKEN = process.env.OUTPOST_OPENCLAW_CHAT_TOKEN || '
 const OUTPOST_TASK_BROADCAST_ON_COMPLETE = process.env.OUTPOST_TASK_BROADCAST_ON_COMPLETE === 'true';
 const OUTPOST_RESTART_CMD = process.env.OUTPOST_RESTART_CMD || '';
 let UPDATE_IN_PROGRESS = false;
+let UPDATE_STATUS = {
+  state: 'idle',
+  phase: 'idle',
+  text: '等待更新',
+  percent: 0,
+  startedAt: null,
+  updatedAt: new Date().toISOString(),
+  finishedAt: null,
+  error: null,
+  oldCommit: null,
+  newCommit: null,
+  branch: 'main'
+};
+
+function setUpdateStatus(patch = {}) {
+  UPDATE_STATUS = {
+    ...UPDATE_STATUS,
+    ...patch,
+    updatedAt: new Date().toISOString()
+  };
+}
 
 function detectShellBin() {
   if (OUTPOST_SHELL_BIN) return OUTPOST_SHELL_BIN;
@@ -828,9 +849,13 @@ app.get('/api/web/topbar', (req, res) => {
   });
 });
 
+app.get('/api/web/system/update-status', (req, res) => {
+  return res.json({ ok: true, ...UPDATE_STATUS });
+});
+
 app.post('/api/web/system/update', async (req, res) => {
   if (!OUTPOST_ALLOW_UPDATE) return res.status(403).json({ ok: false, error: 'update disabled (set OUTPOST_ALLOW_UPDATE=true)' });
-  if (UPDATE_IN_PROGRESS) return res.status(409).json({ ok: false, error: 'update already running' });
+  if (UPDATE_IN_PROGRESS) return res.status(409).json({ ok: false, error: 'update already running', status: UPDATE_STATUS });
 
   UPDATE_IN_PROGRESS = true;
   const startedAt = Date.now();
@@ -841,6 +866,19 @@ app.post('/api/web/system/update', async (req, res) => {
   }
   const autoRestart = req.body?.autoRestart !== false;
 
+  setUpdateStatus({
+    state: 'running',
+    phase: 'prepare',
+    text: '准备更新...',
+    percent: 5,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: null,
+    oldCommit: null,
+    newCommit: null,
+    branch
+  });
+
   let oldCommit = '';
   try {
     const rev = await runShellCommand(`git -C '${OUTPOST_WORKSPACE}' rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
@@ -849,15 +887,19 @@ app.post('/api/web/system/update', async (req, res) => {
     oldCommit = 'unknown';
   }
 
+  setUpdateStatus({ oldCommit });
   writeLog('info', 'update started', { source: 'updater', branch, oldCommit, autoRestart });
 
   try {
+    setUpdateStatus({ phase: 'git', text: '拉取最新代码...', percent: 25 });
     const gitCmd = `git -C '${OUTPOST_WORKSPACE}' fetch --all --prune && git -C '${OUTPOST_WORKSPACE}' checkout ${branch} && git -C '${OUTPOST_WORKSPACE}' reset --hard origin/${branch}`;
     const gitResult = await runShellCommand(gitCmd, OUTPOST_WORKSPACE, 120000);
 
     const hasLock = fs.existsSync(path.join(OUTPOST_WORKSPACE, 'package-lock.json'));
     const installCmd = hasLock ? 'npm ci --no-audit --no-fund' : 'npm install --no-audit --no-fund';
+    setUpdateStatus({ phase: 'install', text: '安装依赖...', percent: 60 });
     const installResult = await runShellCommand(installCmd, OUTPOST_WORKSPACE, 180000);
+    setUpdateStatus({ phase: 'build', text: '构建中...', percent: 85 });
     const buildResult = await runShellCommand('npm run build', OUTPOST_WORKSPACE, 180000);
 
     let newCommit = '';
@@ -876,12 +918,22 @@ app.post('/api/web/system/update', async (req, res) => {
       durationMs: Date.now() - startedAt
     });
 
+    setUpdateStatus({
+      state: 'running',
+      phase: 'restart',
+      text: autoRestart ? '更新完成，准备重启...' : '更新完成',
+      percent: autoRestart ? 95 : 100,
+      newCommit,
+      finishedAt: autoRestart ? null : new Date().toISOString()
+    });
+
     if (autoRestart) {
       if (OUTPOST_RESTART_CMD) {
         try {
           await runShellCommand(OUTPOST_RESTART_CMD, OUTPOST_WORKSPACE, 30000);
         } catch (err) {
           UPDATE_IN_PROGRESS = false;
+          setUpdateStatus({ state: 'error', phase: 'restart', text: '重启失败', percent: 100, error: err?.message || 'restart failed', finishedAt: new Date().toISOString() });
           return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, oldCommit, newCommit });
         }
       } else {
@@ -890,6 +942,7 @@ app.post('/api/web/system/update', async (req, res) => {
     }
 
     UPDATE_IN_PROGRESS = false;
+    setUpdateStatus({ state: 'done', phase: 'done', text: '更新完成', percent: 100, newCommit, finishedAt: new Date().toISOString() });
     return res.json({
       ok: true,
       branch,
@@ -912,6 +965,14 @@ app.post('/api/web/system/update', async (req, res) => {
       oldCommit,
       durationMs: Date.now() - startedAt,
       error: err?.message || 'update failed'
+    });
+    setUpdateStatus({
+      state: 'error',
+      phase: 'error',
+      text: '更新失败',
+      percent: 100,
+      error: err?.message || 'update failed',
+      finishedAt: new Date().toISOString()
     });
     return res.status(400).json({ ok: false, error: err?.message || 'update failed', branch, oldCommit, durationMs: Date.now() - startedAt, stdout: err?.stdout || '', stderr: err?.stderr || '' });
   }
