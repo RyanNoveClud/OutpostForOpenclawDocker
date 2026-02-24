@@ -108,6 +108,7 @@ const OUTPOST_OPENCLAW_CHAT_URL = process.env.OUTPOST_OPENCLAW_CHAT_URL || '';
 const OUTPOST_OPENCLAW_CHAT_TOKEN = process.env.OUTPOST_OPENCLAW_CHAT_TOKEN || '';
 const OUTPOST_TASK_BROADCAST_ON_COMPLETE = process.env.OUTPOST_TASK_BROADCAST_ON_COMPLETE === 'true';
 const OUTPOST_RESTART_CMD = process.env.OUTPOST_RESTART_CMD || '';
+let UPDATE_IN_PROGRESS = false;
 
 function detectShellBin() {
   if (OUTPOST_SHELL_BIN) return OUTPOST_SHELL_BIN;
@@ -829,28 +830,90 @@ app.get('/api/web/topbar', (req, res) => {
 
 app.post('/api/web/system/update', async (req, res) => {
   if (!OUTPOST_ALLOW_UPDATE) return res.status(403).json({ ok: false, error: 'update disabled (set OUTPOST_ALLOW_UPDATE=true)' });
+  if (UPDATE_IN_PROGRESS) return res.status(409).json({ ok: false, error: 'update already running' });
+
+  UPDATE_IN_PROGRESS = true;
+  const startedAt = Date.now();
+  const branch = String(req.body?.branch || 'main').trim() || 'main';
+  if (!/^[A-Za-z0-9._/-]+$/.test(branch)) {
+    UPDATE_IN_PROGRESS = false;
+    return res.status(400).json({ ok: false, error: 'invalid branch' });
+  }
+  const autoRestart = req.body?.autoRestart !== false;
+
+  let oldCommit = '';
   try {
-    const defaultScript = path.join(__dirname, 'scripts', 'auto-update.sh');
-    const hasDefaultScript = fs.existsSync(defaultScript);
-    const cmd = String(req.body?.cmd || (hasDefaultScript ? `${SHELL_BIN} '${defaultScript}'` : `git -C '${OUTPOST_WORKSPACE}' pull --ff-only`)).trim();
-    const autoRestart = req.body?.autoRestart !== false;
-    const { stdout, stderr } = await runShellCommand(cmd, OUTPOST_WORKSPACE, 120000);
+    const rev = await runShellCommand(`git -C '${OUTPOST_WORKSPACE}' rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
+    oldCommit = String(rev?.stdout || '').trim();
+  } catch {
+    oldCommit = 'unknown';
+  }
+
+  writeLog('info', 'update started', { source: 'updater', branch, oldCommit, autoRestart });
+
+  try {
+    const gitCmd = `git -C '${OUTPOST_WORKSPACE}' fetch --all --prune && git -C '${OUTPOST_WORKSPACE}' checkout ${branch} && git -C '${OUTPOST_WORKSPACE}' reset --hard origin/${branch}`;
+    const gitResult = await runShellCommand(gitCmd, OUTPOST_WORKSPACE, 120000);
+
+    const hasLock = fs.existsSync(path.join(OUTPOST_WORKSPACE, 'package-lock.json'));
+    const installCmd = hasLock ? 'npm ci --no-audit --no-fund' : 'npm install --no-audit --no-fund';
+    const installResult = await runShellCommand(installCmd, OUTPOST_WORKSPACE, 180000);
+    const buildResult = await runShellCommand('npm run build', OUTPOST_WORKSPACE, 180000);
+
+    let newCommit = '';
+    try {
+      const rev = await runShellCommand(`git -C '${OUTPOST_WORKSPACE}' rev-parse --short HEAD`, OUTPOST_WORKSPACE, 15000);
+      newCommit = String(rev?.stdout || '').trim();
+    } catch {
+      newCommit = 'unknown';
+    }
+
+    writeLog('info', 'update success', {
+      source: 'updater',
+      branch,
+      oldCommit,
+      newCommit,
+      durationMs: Date.now() - startedAt
+    });
 
     if (autoRestart) {
       if (OUTPOST_RESTART_CMD) {
         try {
           await runShellCommand(OUTPOST_RESTART_CMD, OUTPOST_WORKSPACE, 30000);
         } catch (err) {
-          return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, cmd, stdout, stderr });
+          UPDATE_IN_PROGRESS = false;
+          return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, oldCommit, newCommit });
         }
       } else {
         setTimeout(() => process.exit(0), 300);
       }
     }
 
-    return res.json({ ok: true, cmd, stdout, stderr, restarted: autoRestart, restartMode: OUTPOST_RESTART_CMD ? 'command' : 'exit-for-supervisor' });
+    UPDATE_IN_PROGRESS = false;
+    return res.json({
+      ok: true,
+      branch,
+      oldCommit,
+      newCommit,
+      restarted: autoRestart,
+      restartMode: OUTPOST_RESTART_CMD ? 'command' : 'exit-for-supervisor',
+      durationMs: Date.now() - startedAt,
+      steps: {
+        git: { ok: true, stdout: gitResult.stdout, stderr: gitResult.stderr },
+        install: { ok: true, cmd: installCmd, stdout: installResult.stdout, stderr: installResult.stderr },
+        build: { ok: true, stdout: buildResult.stdout, stderr: buildResult.stderr }
+      }
+    });
   } catch (err) {
-    return res.status(400).json({ ok: false, error: err?.message || 'update failed', stdout: err?.stdout || '', stderr: err?.stderr || '' });
+    UPDATE_IN_PROGRESS = false;
+    writeLog('error', 'update failed', {
+      source: 'updater',
+      branch,
+      oldCommit,
+      durationMs: Date.now() - startedAt,
+      error: err?.message || 'update failed'
+    });
+    return res.status(400).json({ ok: false, error: err?.message || 'update failed', branch, oldCommit, durationMs: Date.now() - startedAt, stdout: err?.stdout || '', stderr: err?.stderr || '' });
   }
 });
 
