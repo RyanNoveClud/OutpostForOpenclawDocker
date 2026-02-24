@@ -38,6 +38,12 @@ tmp/
 logs/
 **/logs/
 *.log
+bridge/*.jsonl
+bridge/chat-sessions.json
+bridge/tasks.json
+bridge/registry.json
+dist/
+.env
 outpost/bridge/*.jsonl
 outpost/bridge/chat-sessions.json
 outpost/bridge/tasks.json
