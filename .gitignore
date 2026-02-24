@@ -1,0 +1,57 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node / JS
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+.venv*/
+__pycache__/
+*.pyc
+
+# Build artifacts
+dist/
+**/dist/
+coverage/
+.tmp/
+tmp/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+.secrets/
+.config/
+.clawra/
+.clawhub/
+
+# Runtime logs / caches
+logs/
+**/logs/
+*.log
+outpost/bridge/*.jsonl
+outpost/bridge/chat-sessions.json
+outpost/bridge/tasks.json
+outpost/bridge/registry.json
+outpost/public/
+outpost/node_modules/
+outpost/dist/
+outpost/.env
+
+# Workspace-local bulky/generated folders
+.npm-cache/
+.npm-global/
+.local-agent-browser/
+playwright-report/
+
+# Keep memory private by default
+memory/
