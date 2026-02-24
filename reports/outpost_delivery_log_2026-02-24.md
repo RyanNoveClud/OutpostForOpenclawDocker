@@ -20,3 +20,17 @@
 ## 后续建议
 - 若后面要恢复 TS 严格校验，再补齐：`tsconfig.json`、完整前端入口、类型依赖与路径映射。
 - 完整恢复后可重新启用：`tsc --noEmit && vite build`。
+
+## 追加修复（12:21 报错）
+### 现象
+1. `Failed to resolve /app.js from .../index.html`
+2. `ERR_MODULE_NOT_FOUND: .../outpost/bridge/bridge-store.js`
+
+### 根因
+- 仓库结构扁平化后，`bridge/bridge-store.js` 未随迁移进入新根目录，导致 `server.js` 的导入路径失效。
+
+### 修复
+- 新增：`bridge/bridge-store.js`（恢复桥接存储工具）
+- 重新验证：
+  - `node --check server.js` 通过
+  - `npm run build` 通过
