@@ -66,8 +66,9 @@ if (!CHAT_SESSIONS.size) {
 
 const execFileAsync = promisify(execFile);
 
-function loadDotEnvFromFile(envPath) {
+function loadDotEnvFromFile(envPath, options = {}) {
   if (!fs.existsSync(envPath)) return;
+  const { override = false, protectedKeys = new Set() } = options;
   const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -75,7 +76,8 @@ function loadDotEnvFromFile(envPath) {
     const eq = line.indexOf('=');
     if (eq <= 0) continue;
     const key = line.slice(0, eq).trim();
-    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+    if (!key) continue;
+    if (Object.prototype.hasOwnProperty.call(process.env, key) && (!override || protectedKeys.has(key))) continue;
     let value = line.slice(eq + 1).trim();
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -87,7 +89,15 @@ function loadDotEnvFromFile(envPath) {
   }
 }
 
+const INITIAL_ENV_KEYS = new Set(Object.keys(process.env));
 loadDotEnvFromFile(path.join(__dirname, '.env'));
+loadDotEnvFromFile(path.join(__dirname, '.env.local'));
+
+const BOOTSTRAP_DEFAULT_WORKSPACE = process.env.OUTPOST_DEFAULT_WORKSPACE || path.resolve(process.cwd(), 'outpost-runtime');
+const BOOTSTRAP_WORKSPACE = process.env.OUTPOST_WORKSPACE || BOOTSTRAP_DEFAULT_WORKSPACE;
+const BOOTSTRAP_CODE_DIR = process.env.OUTPOST_CODE_DIR || BOOTSTRAP_WORKSPACE;
+loadDotEnvFromFile(path.join(BOOTSTRAP_CODE_DIR, '.env'), { override: true, protectedKeys: INITIAL_ENV_KEYS });
+loadDotEnvFromFile(path.join(BOOTSTRAP_CODE_DIR, '.env.local'), { override: true, protectedKeys: INITIAL_ENV_KEYS });
 
 const OUTPOST_TOKEN = process.env.OUTPOST_TOKEN || '';
 const OUTPOST_ALLOW_SHELL = process.env.OUTPOST_ALLOW_SHELL === 'true';
@@ -790,6 +800,24 @@ function isDirEmpty(dir) {
   }
 }
 
+function snapshotLocalConfigFiles(codeDir) {
+  const keepFiles = ['.env.local'];
+  const snapshot = new Map();
+  for (const name of keepFiles) {
+    const full = path.join(codeDir, name);
+    if (!fs.existsSync(full)) continue;
+    snapshot.set(name, fs.readFileSync(full, 'utf8'));
+  }
+  return snapshot;
+}
+
+function restoreLocalConfigFiles(codeDir, snapshot = new Map()) {
+  for (const [name, content] of snapshot.entries()) {
+    const full = path.join(codeDir, name);
+    fs.writeFileSync(full, content, 'utf8');
+  }
+}
+
 async function ensureUpdateCodeDir() {
   const repo = OUTPOST_UPDATE_REPO;
   const codeDir = OUTPOST_CODE_DIR;
@@ -977,6 +1005,7 @@ app.post('/api/web/system/update', async (req, res) => {
   });
 
   let oldCommit = '';
+  let localConfigSnapshot = new Map();
   try {
     await ensureUpdateCodeDir();
     const rev = await runShellCommand(`git -C ${quoteShell(OUTPOST_CODE_DIR)} rev-parse --short HEAD`, OUTPOST_CODE_DIR, 15000);
@@ -991,8 +1020,10 @@ app.post('/api/web/system/update', async (req, res) => {
   try {
     setUpdateStatus({ phase: 'git', text: `拉取最新代码到 ${OUTPOST_CODE_DIR} ...`, percent: 25 });
     await ensureUpdateCodeDir();
+    localConfigSnapshot = snapshotLocalConfigFiles(OUTPOST_CODE_DIR);
     const gitCmd = `git -C ${quoteShell(OUTPOST_CODE_DIR)} fetch --all --prune && git -C ${quoteShell(OUTPOST_CODE_DIR)} checkout ${branch} && git -C ${quoteShell(OUTPOST_CODE_DIR)} reset --hard origin/${branch}`;
     const gitResult = await runShellCommand(gitCmd, OUTPOST_CODE_DIR, 120000);
+    restoreLocalConfigFiles(OUTPOST_CODE_DIR, localConfigSnapshot);
 
     const hasLock = fs.existsSync(path.join(OUTPOST_CODE_DIR, 'package-lock.json'));
     const installCmd = hasLock ? 'npm ci --no-audit --no-fund' : 'npm install --no-audit --no-fund';
@@ -1060,6 +1091,9 @@ app.post('/api/web/system/update', async (req, res) => {
       }
     });
   } catch (err) {
+    try {
+      restoreLocalConfigFiles(OUTPOST_CODE_DIR, localConfigSnapshot);
+    } catch {}
     UPDATE_IN_PROGRESS = false;
     writeLog('error', 'update failed', {
       source: 'updater',
