@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import type { TopbarState } from '../../types';
 import { useAppStore } from '../../store';
 import { useI18n } from '../../i18n';
@@ -38,16 +38,25 @@ function applyFavicon(theme: ThemeMode) {
   document.head.appendChild(link);
 }
 
+function getThemeLabel(theme: ThemeMode, lang: 'zh' | 'en') {
+  if (lang === 'zh') {
+    if (theme === 'nebula') return '星云';
+    if (theme === 'ocean') return '海洋';
+    return '单色';
+  }
+  if (theme === 'nebula') return 'Nebula';
+  if (theme === 'ocean') return 'Ocean';
+  return 'Mono';
+}
+
 export function ShellLayout() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [topbar, setTopbar] = useState<TopbarState | null>(null);
-  const [updating, setUpdating] = useState(false);
   const theme = useAppStore((s) => s.ui.theme) as ThemeMode;
   const setUiSettings = useAppStore((s) => s.setUiSettings);
   const status = useAppStore((s) => s.connection);
   const setConnection = useAppStore((s) => s.setConnection);
-  const { t } = useI18n();
-  const navigate = useNavigate();
+  const { t, lang } = useI18n();
 
   useEffect(() => {
     applyFavicon(theme);
@@ -67,32 +76,6 @@ export function ShellLayout() {
     if (status === 'degraded') return t('degraded');
     return t('offline');
   }, [status, t]);
-
-  async function triggerUpdate() {
-    if (updating) return;
-    try {
-      setUpdating(true);
-      let res = await fetch('/api/web/system/update', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ autoRestart: true })
-      });
-      if (res.status === 404) {
-        res = await fetch('/api/update', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({})
-        });
-      }
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json?.ok) throw new Error(json?.error || `HTTP ${res.status}`);
-      alert('更新脚本已执行，服务将自动重启。');
-    } catch (err) {
-      alert(`更新失败: ${err instanceof Error ? err.message : 'network/endpoint unavailable'}`);
-    } finally {
-      setUpdating(false);
-    }
-  }
 
   return (
     <div className="shell" data-theme={theme}>
@@ -125,28 +108,24 @@ export function ShellLayout() {
       <main className="content">
         <header className="topbar">
           <div className="topbar-left">
-            <span className={`status-dot ${status}`} />
-            <span>{statusText}</span>
-            <span className="workspace-chip">{topbar?.workspacePath || '/home/node/.openclaw/workspace'}</span>
+            <span className="version-chip" title={`Outpost version: ${topbar?.outpostVersion || '0.10.3'}`}>
+              Outpost v{topbar?.outpostVersion || '0.10.3'}
+            </span>
           </div>
 
           <div className="topbar-right">
-            <span className="version-chip">
-              Outpost v{topbar?.outpostVersion || '0.10.3'}
-              {topbar?.outpostUpdatedAt ? ` · 更新于 ${new Date(topbar.outpostUpdatedAt).toLocaleString()}` : ''}
-              {' '}· OpenClaw v{topbar?.openclawVersion || '2026.2.x'}
+            <button
+              type="button"
+              className="icon-button"
+              title={`${t('theme')}: ${getThemeLabel(theme, lang)}`}
+              aria-label={`${t('theme')}: ${getThemeLabel(theme, lang)}`}
+              onClick={() => setUiSettings({ theme: nextTheme(theme) })}
+            >
+              🎨
+            </button>
+            <span className="status-icon-wrap" title={statusText} aria-label={statusText}>
+              <span className={`status-dot ${status}`} />
             </span>
-            <button type="button" onClick={() => setUiSettings({ theme: nextTheme(theme) })}>
-              {t('theme')}：{theme === 'nebula' ? t('themeNebula') : theme === 'ocean' ? t('themeOcean') : t('themeMono')}
-            </button>
-            <button type="button" onClick={() => navigate('/settings')}>
-              {t('settings')}
-            </button>
-            {topbar?.allowUpdate ? (
-              <button type="button" onClick={triggerUpdate} disabled={updating}>
-                {updating ? '更新中...' : '更新并重启'}
-              </button>
-            ) : null}
           </div>
         </header>
 

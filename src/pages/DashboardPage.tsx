@@ -7,20 +7,22 @@ import {
   isMetricCritical,
   sortEventsDesc
 } from './dashboard-utils';
-import type { DashboardEvent, DashboardMetrics } from '../types';
+import type { DashboardEvent, DashboardMetrics, TopbarState } from '../types';
 import { useI18n } from '../i18n';
 
 export function DashboardPage() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [events, setEvents] = useState<DashboardEvent[]>([]);
+  const [topbar, setTopbar] = useState<TopbarState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { t } = useI18n();
 
   useEffect(() => {
-    Promise.all([dataAdapter.getDashboardMetrics(), dataAdapter.getDashboardEvents()])
-      .then(([metricsData, eventsData]) => {
+    Promise.all([dataAdapter.getDashboardMetrics(), dataAdapter.getDashboardEvents(), dataAdapter.getTopbarState()])
+      .then(([metricsData, eventsData, topbarData]) => {
         setMetrics(metricsData);
         setEvents(sortEventsDesc(eventsData));
+        setTopbar(topbarData);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'unknown error'));
   }, []);
@@ -57,6 +59,16 @@ export function DashboardPage() {
         <article className="dashboard-card">
           <h3>{t('lastHeartbeat')}</h3>
           <p>{metrics ? metrics.lastHeartbeatAt : '--'}</p>
+        </article>
+
+        <article className="dashboard-card">
+          <h3>OpenClaw 版本</h3>
+          <p>{topbar?.openclawVersion ? `v${topbar.openclawVersion}` : '--'}</p>
+        </article>
+
+        <article className="dashboard-card">
+          <h3>项目路径</h3>
+          <p className="dashboard-path">{topbar?.workspacePath || '/home/node/.openclaw/workspace'}</p>
         </article>
       </section>
 

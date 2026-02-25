@@ -17,12 +17,10 @@ export function SettingsPage() {
     dataAdapter
       .getSettings()
       .then((result) => {
-        const merged = { ...result, ...ui };
-        setSettings(merged);
-        setUiSettings(merged);
+        setSettings(result);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'unknown error'));
-  }, [setUiSettings, ui]);
+  }, []);
 
   async function runAutoUpdate() {
     if (updating) return;
@@ -62,11 +60,15 @@ export function SettingsPage() {
             {t('theme')}
             <select
               value={ui.theme}
-              onChange={(e) => setUiSettings({ theme: e.target.value as UiSettings['theme'] })}
+              onChange={(e) => {
+                const nextTheme = e.target.value as UiSettings['theme'];
+                console.debug('[settings] theme change', { from: ui.theme, to: nextTheme });
+                setUiSettings({ theme: nextTheme });
+              }}
             >
-              <option value="nebula">Nebula</option>
-              <option value="ocean">Ocean</option>
-              <option value="mono">Mono</option>
+              <option value="nebula">{t('themeNebula')}</option>
+              <option value="ocean">{t('themeOcean')}</option>
+              <option value="mono">{t('themeMono')}</option>
             </select>
           </label>
           <label>
