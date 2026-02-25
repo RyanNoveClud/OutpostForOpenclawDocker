@@ -19,6 +19,7 @@ const BRIDGE_TASKS = new Map(readTasks(BRIDGE_STORE.tasksPath).map((t) => [t.tas
 const COMPLETED_TASK_BROADCASTED = new Set();
 const WEB_ACTION_LOG = path.join(BRIDGE_STORE.dir, 'web-actions.jsonl');
 const SKILLS_STATE_PATH = path.join(BRIDGE_STORE.dir, 'skills-state.json');
+const VERSION_STATE_PATH = path.join(BRIDGE_STORE.dir, 'version-state.json');
 
 const CHAT_CACHE_PATH = path.join(BRIDGE_STORE.dir, 'chat-sessions.json');
 const CHAT_SESSIONS = new Map();
@@ -120,6 +121,7 @@ const OUTPOST_OPENCLAW_CHAT_URL = process.env.OUTPOST_OPENCLAW_CHAT_URL || '';
 const OUTPOST_OPENCLAW_CHAT_TOKEN = process.env.OUTPOST_OPENCLAW_CHAT_TOKEN || '';
 const OUTPOST_TASK_BROADCAST_ON_COMPLETE = process.env.OUTPOST_TASK_BROADCAST_ON_COMPLETE === 'true';
 const OUTPOST_RESTART_CMD = process.env.OUTPOST_RESTART_CMD || '';
+const OUTPOST_AUTO_RESTART_FALLBACK = process.env.OUTPOST_AUTO_RESTART_FALLBACK !== 'false';
 let UPDATE_IN_PROGRESS = false;
 let UPDATE_STATUS = {
   state: 'idle',
@@ -848,6 +850,34 @@ async function ensureUpdateCodeDir() {
   }
 }
 
+async function getGitRefInfo(codeDir, ref = 'HEAD') {
+  const commitResult = await runShellCommand(`git -C ${quoteShell(codeDir)} rev-parse --short ${ref}`, codeDir, 15000);
+  const commit = String(commitResult?.stdout || '').trim();
+  const tsResult = await runShellCommand(`git -C ${quoteShell(codeDir)} show -s --format=%cI ${ref}`, codeDir, 15000);
+  const committedAt = String(tsResult?.stdout || '').trim();
+  return { commit, committedAt };
+}
+
+function readVersionState() {
+  if (!fs.existsSync(VERSION_STATE_PATH)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(VERSION_STATE_PATH, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function writeVersionState(patch = {}) {
+  const prev = readVersionState() || {};
+  const next = {
+    ...prev,
+    ...patch,
+    updatedAt: new Date().toISOString()
+  };
+  fs.writeFileSync(VERSION_STATE_PATH, JSON.stringify(next, null, 2));
+  return next;
+}
+
 async function runDockerExec(args = [], timeout = 30000) {
   return await execFileAsync('docker', ['exec', OPENCLAW_DOCKER_CONTAINER, ...args], { cwd: OUTPOST_WORKSPACE, timeout });
 }
@@ -975,7 +1005,7 @@ app.get('/api/web/topbar', (req, res) => {
 });
 
 app.get('/api/web/system/update-status', (req, res) => {
-  return res.json({ ok: true, ...UPDATE_STATUS });
+  return res.json({ ok: true, ...UPDATE_STATUS, versionState: readVersionState() });
 });
 
 app.post('/api/web/system/update', async (req, res) => {
@@ -1021,7 +1051,49 @@ app.post('/api/web/system/update', async (req, res) => {
     setUpdateStatus({ phase: 'git', text: `拉取最新代码到 ${OUTPOST_CODE_DIR} ...`, percent: 25 });
     await ensureUpdateCodeDir();
     localConfigSnapshot = snapshotLocalConfigFiles(OUTPOST_CODE_DIR);
-    const gitCmd = `git -C ${quoteShell(OUTPOST_CODE_DIR)} fetch --all --prune && git -C ${quoteShell(OUTPOST_CODE_DIR)} checkout ${branch} && git -C ${quoteShell(OUTPOST_CODE_DIR)} reset --hard origin/${branch}`;
+    const fetchCmd = `git -C ${quoteShell(OUTPOST_CODE_DIR)} fetch --all --prune`;
+    const fetchResult = await runShellCommand(fetchCmd, OUTPOST_CODE_DIR, 120000);
+    const localRef = await getGitRefInfo(OUTPOST_CODE_DIR, 'HEAD');
+    const remoteRef = await getGitRefInfo(OUTPOST_CODE_DIR, `origin/${branch}`);
+
+    if (localRef.commit && remoteRef.commit && localRef.commit === remoteRef.commit) {
+      const versionMeta = getOutpostVersionMeta();
+      const state = writeVersionState({
+        branch,
+        repo: OUTPOST_UPDATE_REPO,
+        codeDir: OUTPOST_CODE_DIR,
+        result: 'up-to-date',
+        local: { ...localRef, version: versionMeta.version },
+        remote: { ...remoteRef }
+      });
+      UPDATE_IN_PROGRESS = false;
+      setUpdateStatus({
+        state: 'done',
+        phase: 'done',
+        text: '本地与远端版本一致，无需升级',
+        percent: 100,
+        newCommit: localRef.commit,
+        finishedAt: new Date().toISOString()
+      });
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: 'already-up-to-date',
+        branch,
+        workspace: OUTPOST_WORKSPACE,
+        codeDir: OUTPOST_CODE_DIR,
+        repo: OUTPOST_UPDATE_REPO,
+        local: localRef,
+        remote: remoteRef,
+        versionState: state,
+        durationMs: Date.now() - startedAt,
+        steps: {
+          git: { ok: true, stdout: fetchResult.stdout, stderr: fetchResult.stderr }
+        }
+      });
+    }
+
+    const gitCmd = `git -C ${quoteShell(OUTPOST_CODE_DIR)} checkout ${branch} && git -C ${quoteShell(OUTPOST_CODE_DIR)} reset --hard origin/${branch}`;
     const gitResult = await runShellCommand(gitCmd, OUTPOST_CODE_DIR, 120000);
     restoreLocalConfigFiles(OUTPOST_CODE_DIR, localConfigSnapshot);
 
@@ -1040,6 +1112,26 @@ app.post('/api/web/system/update', async (req, res) => {
       newCommit = 'unknown';
     }
 
+    let localFinal = { commit: newCommit, committedAt: '' };
+    let remoteFinal = { commit: '', committedAt: '' };
+    try {
+      localFinal = await getGitRefInfo(OUTPOST_CODE_DIR, 'HEAD');
+      remoteFinal = await getGitRefInfo(OUTPOST_CODE_DIR, `origin/${branch}`);
+    } catch {}
+
+    const versionMeta = getOutpostVersionMeta();
+    const versionState = writeVersionState({
+      branch,
+      repo: OUTPOST_UPDATE_REPO,
+      codeDir: OUTPOST_CODE_DIR,
+      result: 'updated',
+      oldCommit,
+      newCommit,
+      local: { ...localFinal, version: versionMeta.version },
+      remote: remoteFinal,
+      finishedAt: new Date().toISOString()
+    });
+
     writeLog('info', 'update success', {
       source: 'updater',
       branch,
@@ -1057,17 +1149,30 @@ app.post('/api/web/system/update', async (req, res) => {
       finishedAt: autoRestart ? null : new Date().toISOString()
     });
 
+    let restartMode = 'none';
     if (autoRestart) {
       if (OUTPOST_RESTART_CMD) {
         try {
           await runShellCommand(OUTPOST_RESTART_CMD, OUTPOST_WORKSPACE, 30000);
+          restartMode = 'command';
+        } catch (err) {
+          UPDATE_IN_PROGRESS = false;
+          setUpdateStatus({ state: 'error', phase: 'restart', text: '重启失败', percent: 100, error: err?.message || 'restart failed', finishedAt: new Date().toISOString() });
+          return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, oldCommit, newCommit });
+        }
+      } else if (OUTPOST_AUTO_RESTART_FALLBACK) {
+        try {
+          const fallbackCmd = 'nohup npm run start >/tmp/outpost-restart.log 2>&1 &';
+          await runShellCommand(fallbackCmd, OUTPOST_CODE_DIR, 15000);
+          restartMode = 'fallback-start';
+          setTimeout(() => process.exit(0), 500);
         } catch (err) {
           UPDATE_IN_PROGRESS = false;
           setUpdateStatus({ state: 'error', phase: 'restart', text: '重启失败', percent: 100, error: err?.message || 'restart failed', finishedAt: new Date().toISOString() });
           return res.status(400).json({ ok: false, error: `restart failed: ${err?.message || 'unknown'}`, oldCommit, newCommit });
         }
       } else {
-        setTimeout(() => process.exit(0), 300);
+        restartMode = 'manual-required';
       }
     }
 
@@ -1081,9 +1186,10 @@ app.post('/api/web/system/update', async (req, res) => {
       repo: OUTPOST_UPDATE_REPO,
       oldCommit,
       newCommit,
-      restarted: autoRestart,
-      restartMode: OUTPOST_RESTART_CMD ? 'command' : 'exit-for-supervisor',
+      restarted: autoRestart && restartMode !== 'manual-required',
+      restartMode,
       durationMs: Date.now() - startedAt,
+      versionState,
       steps: {
         git: { ok: true, stdout: gitResult.stdout, stderr: gitResult.stderr },
         install: { ok: true, cmd: installCmd, stdout: installResult.stdout, stderr: installResult.stderr },
@@ -1107,6 +1213,15 @@ app.post('/api/web/system/update', async (req, res) => {
       phase: 'error',
       text: '更新失败',
       percent: 100,
+      error: err?.message || 'update failed',
+      finishedAt: new Date().toISOString()
+    });
+    writeVersionState({
+      branch,
+      repo: OUTPOST_UPDATE_REPO,
+      codeDir: OUTPOST_CODE_DIR,
+      result: 'failed',
+      oldCommit,
       error: err?.message || 'update failed',
       finishedAt: new Date().toISOString()
     });
