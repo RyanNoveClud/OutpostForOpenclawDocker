@@ -40,13 +40,13 @@ function applyFavicon(theme: ThemeMode) {
 
 function getThemeLabel(theme: ThemeMode, lang: 'zh' | 'en') {
   if (lang === 'zh') {
-    if (theme === 'nebula') return '星云';
-    if (theme === 'ocean') return '海洋';
-    return '单色';
+    if (theme === 'nebula') return '宙斯';
+    if (theme === 'ocean') return '波塞冬';
+    return '哈迪斯';
   }
-  if (theme === 'nebula') return 'Nebula';
-  if (theme === 'ocean') return 'Ocean';
-  return 'Mono';
+  if (theme === 'nebula') return 'Zeus';
+  if (theme === 'ocean') return 'Poseidon';
+  return 'Hades';
 }
 
 export function ShellLayout() {
@@ -116,12 +116,12 @@ export function ShellLayout() {
           <div className="topbar-right">
             <button
               type="button"
-              className="icon-button"
-              title={`${t('theme')}: ${getThemeLabel(theme, lang)}`}
-              aria-label={`${t('theme')}: ${getThemeLabel(theme, lang)}`}
+              className="theme-switch-button"
+              title={getThemeLabel(theme, lang)}
+              aria-label={getThemeLabel(theme, lang)}
               onClick={() => setUiSettings({ theme: nextTheme(theme) })}
             >
-              🎨
+              {getThemeLabel(theme, lang)}
             </button>
             <span className="status-icon-wrap" title={statusText} aria-label={statusText}>
               <span className={`status-dot ${status}`} />
