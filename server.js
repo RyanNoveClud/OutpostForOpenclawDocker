@@ -812,7 +812,11 @@ async function ensureUpdateCodeDir() {
       await runShellCommand(`git -C ${quoteShell(codeDir)} remote set-url origin ${quoteShell(repo)}`, codeDir, 15000);
     }
   } catch {
-    await runShellCommand(`git -C ${quoteShell(codeDir)} remote set-url origin ${quoteShell(repo)}`, codeDir, 15000);
+    try {
+      await runShellCommand(`git -C ${quoteShell(codeDir)} remote add origin ${quoteShell(repo)}`, codeDir, 15000);
+    } catch {
+      await runShellCommand(`git -C ${quoteShell(codeDir)} remote set-url origin ${quoteShell(repo)}`, codeDir, 15000);
+    }
   }
 }
 
